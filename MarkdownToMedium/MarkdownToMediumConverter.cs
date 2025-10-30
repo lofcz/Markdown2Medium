@@ -36,6 +36,9 @@ public static class MarkdownToMediumConverter
         using StringWriter writer = new StringWriter();
         MediumHtmlRenderer renderer = new MediumHtmlRenderer(writer, inlineCodeFormat);
         defaultPipeline.Setup(renderer);
+        
+        // Setup custom renderers AFTER pipeline setup to ensure they override any defaults
+        renderer.SetupCustomRenderers();
 
         MarkdownDocument document = Markdown.Parse(markdown, defaultPipeline);
         renderer.Render(document);
@@ -50,10 +53,14 @@ public static class MarkdownToMediumConverter
     private static MarkdownPipeline BuildPipeline()
     {
         return new MarkdownPipelineBuilder()
-            .UseAdvancedExtensions()      // Enables GFM (GitHub Flavored Markdown)
+            .UseEmphasisExtras()          // Bold, italic, strikethrough
             .UsePipeTables()              // Enables table support
-            .UseSoftlineBreakAsHardlineBreak()  // Converts line breaks to <br> tags
+            .UseTaskLists()               // GitHub task lists
+            .UseAutoLinks()               // Auto-convert URLs to links
             .UseListExtras()              // Smart list handling
+            .UseFootnotes()               // Footnote support
+            .UseAutoIdentifiers()         // Auto-generate heading IDs
+            .UseSoftlineBreakAsHardlineBreak()  // Converts line breaks to <br> tags
             .DisableHtml()                // Sanitize HTML (matches original sanitize: true)
             .Build();
     }

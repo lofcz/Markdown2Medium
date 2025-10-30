@@ -22,7 +22,14 @@ internal sealed class MediumHtmlRenderer : HtmlRenderer
     public MediumHtmlRenderer(TextWriter writer, InlineCodeFormat inlineCodeFormat) : base(writer)
     {
         _inlineCodeFormat = inlineCodeFormat;
-        
+    }
+    
+    /// <summary>
+    /// Called to setup the renderer with custom renderers after the pipeline has been setup.
+    /// This must be called after pipeline.Setup(renderer) to ensure our custom renderers override the defaults.
+    /// </summary>
+    public void SetupCustomRenderers()
+    {
         // Replace the default code inline renderer with our custom one
         var codeInlineRenderer = ObjectRenderers.FindExact<CodeInlineRenderer>();
         if (codeInlineRenderer != null)
@@ -30,6 +37,19 @@ internal sealed class MediumHtmlRenderer : HtmlRenderer
             ObjectRenderers.Remove(codeInlineRenderer);
         }
         ObjectRenderers.Add(new MediumCodeInlineRenderer(_inlineCodeFormat));
+        
+        // Replace the default CodeBlockRenderer with our custom Medium-compatible one
+        var defaultCodeBlockRenderer = ObjectRenderers.FindExact<Markdig.Renderers.Html.CodeBlockRenderer>();
+        if (defaultCodeBlockRenderer != null)
+        {
+            ObjectRenderers.Remove(defaultCodeBlockRenderer);
+        }
+        
+        // Add our custom renderers for both CodeBlock and FencedCodeBlock
+        // NOTE: We add the more specific FencedCodeBlock renderer first, then the general CodeBlock renderer
+        // Markdig will use the most specific renderer that matches
+        ObjectRenderers.Add(new MediumFencedCodeBlockRenderer());
+        ObjectRenderers.Add(new MediumCodeBlockRenderer());
         
         // Replace the default table renderer with our custom ASCII table renderer
         var tableRenderer = ObjectRenderers.FindExact<HtmlTableRenderer>();
@@ -40,6 +60,86 @@ internal sealed class MediumHtmlRenderer : HtmlRenderer
         ObjectRenderers.Add(new AsciiTableRenderer());
     }
 
+    /// <summary>
+    /// Shared rendering logic for both code blocks and fenced code blocks.
+    /// </summary>
+    private static void RenderMediumCodeBlock(HtmlRenderer renderer, CodeBlock obj)
+    {
+        renderer.EnsureLine();
+        
+        // Get the code content
+        string code = obj.Lines.ToString();
+        
+        if (string.IsNullOrEmpty(code))
+        {
+            renderer.Write("<pre></pre>");
+            renderer.WriteLine();
+            return;
+        }
+        
+        // Split into lines
+        var lines = code.Split(new[] { '\n', '\r' }, StringSplitOptions.None)
+            .Where(l => l.Length > 0 || code.EndsWith("\n")) // Keep empty lines that were in original
+            .ToList();
+        
+        // Remove trailing empty line if present (common artifact)
+        if (lines.Count > 0 && string.IsNullOrWhiteSpace(lines[lines.Count - 1]))
+        {
+            lines.RemoveAt(lines.Count - 1);
+        }
+        
+        renderer.Write("<pre>");
+        
+        for (int i = 0; i < lines.Count; i++)
+        {
+            string line = lines[i];
+            
+            // Empty lines become &nbsp;
+            if (string.IsNullOrWhiteSpace(line))
+            {
+                renderer.Write("&nbsp;");
+            }
+            else
+            {
+                // Escape HTML entities
+                renderer.WriteEscape(line);
+            }
+            
+            // Add <br> between lines (but not after the last line)
+            if (i < lines.Count - 1)
+            {
+                renderer.Write("<br>");
+            }
+        }
+        
+        renderer.Write("</pre>");
+        renderer.WriteLine();
+    }
+    
+    /// <summary>
+    /// Custom renderer for fenced code blocks that outputs Medium-compatible format.
+    /// Medium requires PRE with BR tags instead of PRE with CODE tags.
+    /// </summary>
+    private sealed class MediumFencedCodeBlockRenderer : HtmlObjectRenderer<FencedCodeBlock>
+    {
+        protected override void Write(HtmlRenderer renderer, FencedCodeBlock obj)
+        {
+            RenderMediumCodeBlock(renderer, obj);
+        }
+    }
+    
+    /// <summary>
+    /// Custom renderer for code blocks that outputs Medium-compatible format.
+    /// Medium requires PRE with BR tags instead of PRE with CODE tags.
+    /// </summary>
+    private sealed class MediumCodeBlockRenderer : HtmlObjectRenderer<CodeBlock>
+    {
+        protected override void Write(HtmlRenderer renderer, CodeBlock obj)
+        {
+            RenderMediumCodeBlock(renderer, obj);
+        }
+    }
+    
     /// <summary>
     /// Custom renderer for inline code that applies Medium-specific formatting.
     /// </summary>
@@ -183,10 +283,41 @@ internal sealed class MediumHtmlRenderer : HtmlRenderer
                 }
             }
 
-            // Wrap in <pre><code> block for Medium
-            renderer.Write("<pre><code>");
-            renderer.WriteEscape(tableText.ToString().TrimEnd());
-            renderer.Write("</code></pre>");
+            // Wrap in <pre> block with <br> tags for Medium (same format as code blocks)
+            string tableContent = tableText.ToString().TrimEnd();
+            var lines = tableContent.Split(new[] { '\n', '\r' }, StringSplitOptions.None)
+                .Where(l => l.Length > 0)
+                .ToList();
+            
+            // Remove trailing empty line if present
+            if (lines.Count > 0 && string.IsNullOrWhiteSpace(lines[lines.Count - 1]))
+            {
+                lines.RemoveAt(lines.Count - 1);
+            }
+            
+            renderer.Write("<pre>");
+            for (int i = 0; i < lines.Count; i++)
+            {
+                string line = lines[i];
+                
+                // Empty lines become &nbsp;
+                if (string.IsNullOrWhiteSpace(line))
+                {
+                    renderer.Write("&nbsp;");
+                }
+                else
+                {
+                    // Escape HTML entities
+                    renderer.WriteEscape(line);
+                }
+                
+                // Add <br> between lines (but not after the last line)
+                if (i < lines.Count - 1)
+                {
+                    renderer.Write("<br>");
+                }
+            }
+            renderer.Write("</pre>");
             renderer.WriteLine();
         }
 
